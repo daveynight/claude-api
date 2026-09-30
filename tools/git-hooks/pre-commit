@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Block commits that stage secrets. Enable with:
+#   git config core.hooksPath tools/git-hooks
+# Bypass a false positive with: git commit --no-verify
+
+fail=0
+
+# 1. Files that should never be committed.
+blocked=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_rsa.*)$' | grep -v '\.env\.example$')
+if [ -n "$blocked" ]; then
+  echo "Blocked: private files are staged:"; echo "$blocked" | sed 's/^/  /'; fail=1
+fi
+
+# 2. Secret-looking strings on lines being added (covers notebook cells and outputs).
+patterns='sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(api[_-]?key|secret|token|password)["'"'"' ]*[:=]["'"'"' ]*[A-Za-z0-9_\-]{20,}'
+# Report file names only, never the matching text, so the hook can't leak what it catches.
+hits=$(git diff --cached -U0 --no-color | awk '/^\+\+\+ b\//{f=substr($0,7)} /^\+[^+]/{print f"\t"$0}' \
+  | grep -Ei -E "$patterns" | cut -f1 | sort -u)
+if [ -n "$hits" ]; then
+  echo "Blocked: staged changes contain secret-looking strings in:"; echo "$hits" | sed 's/^/  /'; fail=1
+fi
+
+exit $fail
